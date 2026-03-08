@@ -10,8 +10,7 @@ class TestAliyunASR:
     def config(self):
         return Config(
             aliyun=AliyunConfig(
-                access_key_id="test-key",
-                access_key_secret="test-secret",
+                api_key="test-key",
                 asr=ASRConfig(model="test-model"),
             )
         )
@@ -21,7 +20,7 @@ class TestAliyunASR:
         return AliyunASR(config)
 
     def test_init(self, asr):
-        assert asr.config.aliyun.access_key_id == "test-key"
+        assert asr.api_key == "test-key"
 
     @patch("httpx.AsyncClient.post")
     @patch("builtins.open")

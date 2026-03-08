@@ -10,8 +10,7 @@ class TestSummarizer:
     def config(self):
         return Config(
             aliyun=AliyunConfig(
-                access_key_id="test-key",
-                access_key_secret="test-secret",
+                api_key="test-key",
                 llm=LLMConfig(model="qwen-test", max_tokens=1000),
             )
         )

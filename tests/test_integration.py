@@ -13,8 +13,7 @@ class TestIntegration:
     def config(self):
         return Config(
             aliyun=AliyunConfig(
-                access_key_id="test-key",
-                access_key_secret="test-secret",
+                api_key="test-key",
                 asr=ASRConfig(model="test-asr"),
                 llm=LLMConfig(model="test-llm"),
             )

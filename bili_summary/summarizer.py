@@ -35,7 +35,7 @@ class Summarizer:
 
     def __init__(self, config: Config):
         self.config = config
-        self.api_key = config.aliyun.access_key_id
+        self.api_key = config.aliyun.api_key
         self.model = config.aliyun.llm.model
         self.max_tokens = config.aliyun.llm.max_tokens
         self.temperature = config.aliyun.llm.temperature

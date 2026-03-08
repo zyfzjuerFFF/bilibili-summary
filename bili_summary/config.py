@@ -20,8 +20,7 @@ class LLMConfig:
 
 @dataclass
 class AliyunConfig:
-    access_key_id: str = ""
-    access_key_secret: str = ""
+    api_key: str = ""  # 阿里云百炼 API Key
     region: str = "cn-beijing"
     asr: ASRConfig = field(default_factory=ASRConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -49,8 +48,7 @@ class Config:
 
         return cls(
             aliyun=AliyunConfig(
-                access_key_id=aliyun_data.get("access_key_id", ""),
-                access_key_secret=aliyun_data.get("access_key_secret", ""),
+                api_key=aliyun_data.get("api_key", aliyun_data.get("access_key_id", "")),
                 region=aliyun_data.get("region", "cn-beijing"),
                 asr=ASRConfig(model=asr_data.get("model", "paraformer-realtime-v1")),
                 llm=LLMConfig(
@@ -93,8 +91,7 @@ class ConfigManager:
 
         data = {
             "aliyun": {
-                "access_key_id": config.aliyun.access_key_id,
-                "access_key_secret": config.aliyun.access_key_secret,
+                "api_key": config.aliyun.api_key,
                 "region": config.aliyun.region,
                 "asr": {"model": config.aliyun.asr.model},
                 "llm": {
@@ -116,11 +113,12 @@ class ConfigManager:
     def get_template(self) -> str:
         """获取配置模板"""
         return """# Bilibili Summary 配置文件
-# 请填写你的阿里云百炼配置
+# 请填写你的阿里云百炼 API Key
+# 获取方式: https://bailian.console.aliyun.com/#/api-key
 
 aliyun:
-  access_key_id: "your-access-key-id"
-  access_key_secret: "your-access-key-secret"
+  # 阿里云百炼 API Key (Bearer Token)
+  api_key: "your-api-key"
   region: "cn-beijing"
 
   # ASR 语音识别配置

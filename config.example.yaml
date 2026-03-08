@@ -1,7 +1,9 @@
 # config.example.yaml
+# 阿里云百炼 API Key 获取: https://bailian.console.aliyun.com/#/api-key
+
 aliyun:
-  access_key_id: "your-access-key-id"
-  access_key_secret: "your-access-key-secret"
+  # 阿里云百炼 API Key (Bearer Token)
+  api_key: "your-api-key"
   region: "cn-beijing"
 
   asr:

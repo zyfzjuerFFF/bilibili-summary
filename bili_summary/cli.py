@@ -95,7 +95,7 @@ async def process_video(
                 progress.update(task, description="无官方字幕，准备使用ASR...")
 
                 # 使用ASR
-                if not config.aliyun.access_key_id:
+                if not config.aliyun.api_key:
                     print_error("未配置阿里云API密钥，无法使用ASR")
                     return
 
@@ -208,14 +208,14 @@ def main(url_or_bv: Optional[str], output: Optional[str], output_format: str, co
     # 配置模式
     if configure:
         console.print(Panel("配置阿里云百炼", border_style="blue"))
+        console.print("获取 API Key: https://bailian.console.aliyun.com/#/api-key")
+        console.print()
 
-        access_key = click.prompt("Access Key ID", hide_input=False)
-        access_secret = click.prompt("Access Key Secret", hide_input=True)
+        api_key = click.prompt("API Key", hide_input=True)
         region = click.prompt("Region", default="cn-beijing")
 
         config = Config()
-        config.aliyun.access_key_id = access_key
-        config.aliyun.access_key_secret = access_secret
+        config.aliyun.api_key = api_key
         config.aliyun.region = region
 
         config_manager.save(config)
@@ -229,8 +229,8 @@ def main(url_or_bv: Optional[str], output: Optional[str], output_format: str, co
 
     config = config_manager.load()
 
-    if not config.aliyun.access_key_id:
-        print_error("阿里云 Access Key 未配置")
+    if not config.aliyun.api_key:
+        print_error("阿里云 API Key 未配置")
         sys.exit(1)
 
     # 检查是否提供了 URL/BV

@@ -18,7 +18,7 @@ pip install -e .
 
 ## 配置
 
-首次使用需要配置阿里云百炼API密钥：
+首次使用需要配置阿里云百炼 API Key：
 
 ```bash
 bili-summary --configure
@@ -28,8 +28,8 @@ bili-summary --configure
 
 ```yaml
 aliyun:
-  access_key_id: "your-access-key"
-  access_key_secret: "your-secret"
+  # 从 https://bailian.console.aliyun.com/#/api-key 获取 API Key
+  api_key: "your-api-key"
   region: "cn-beijing"
   asr:
     model: "paraformer-realtime-v1"

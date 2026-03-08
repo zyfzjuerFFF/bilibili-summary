@@ -17,13 +17,12 @@ class AliyunASR:
 
     def __init__(self, config: Config):
         self.config = config
-        self.access_key_id = config.aliyun.access_key_id
-        self.access_key_secret = config.aliyun.access_key_secret
+        self.api_key = config.aliyun.api_key
         self.region = config.aliyun.region
         self.model = config.aliyun.asr.model
 
         # 阿里云百炼API端点
-        self.endpoint = f"https://dashscope.aliyuncs.com"
+        self.endpoint = "https://dashscope.aliyuncs.com"
 
     def _sign_request(self, method: str, uri: str, params: Dict) -> Dict:
         """
@@ -64,7 +63,7 @@ class AliyunASR:
         url = f"{self.endpoint}/api/v1/services/audio/asr/transcription"
 
         headers = {
-            "Authorization": f"Bearer {self.access_key_id}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
