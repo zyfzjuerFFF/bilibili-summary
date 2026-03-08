@@ -1,0 +1,43 @@
+# Bilibili Login Support via SESSDATA
+
+To allow downloading native Bilibili subtitles that require a logged-in user, we will add support for configuring a `SESSDATA` cookie.
+To make it user-friendly, we will implement QR code login where the user can scan a QR code in the terminal to grant access, rather than manually hunting for the cookie.
+
+## User Review Required
+No breaking changes. The user will be able to configure `SESSDATA` via `--configure` or by directly editing `~/.bili-summary/config.yaml`.
+
+## Proposed Changes
+
+### Configuration
+#### [MODIFY] config.py
+- Add a new [BilibiliConfig](file:///Users/zhangyifei/Code/bilibli-summary/bili_summary/config.py#21-24) class with a `sessdata` string field.
+- Update [Config](file:///Users/zhangyifei/Code/bilibli-summary/bili_summary/config.py#41-76) class to include a `bilibili` field of type [BilibiliConfig](file:///Users/zhangyifei/Code/bilibli-summary/bili_summary/config.py#21-24).
+- Update `Config.from_dict` and `ConfigManager.save` to serialize and deserialize the `bilibili` config.
+- Update `ConfigManager.get_template` to mention the QR login flow or SESSDATA via config.
+
+### Dependencies
+#### [MODIFY] pyproject.toml
+- Add `qrcode` to dependencies to render QR codes in the terminal.
+
+### API Client
+#### [MODIFY] bilibili.py
+- Update `BilibiliAPI.__init__` to accept an optional `SESSDATA` string.
+- If `SESSDATA` is provided, add it to the `httpx.AsyncClient` cookies.
+- Add `generate_qr_code()` method.
+- Add `poll_qr_code(qrcode_key)` method that returns the login status and, if successful, extracts SESSDATA from the response headers/cookies.
+
+### CLI
+#### [MODIFY] cli.py
+- Update [process_video](file:///Users/zhangyifei/Code/bilibli-summary/bili_summary/cli.py#39-175) to instantiate [BilibiliAPI](file:///Users/zhangyifei/Code/bilibli-summary/bili_summary/bilibili.py#40-183) with `config.bilibili.sessdata`.
+- Update the `--configure` flow in [main](file:///Users/zhangyifei/Code/bilibli-summary/bili_summary/cli.py#177-252) to generate a QR code, print it to the terminal, and poll until the user scans and confirms logic.
+- Save the extracted `SESSDATA` to the config.
+
+## Verification Plan
+### Automated Tests
+- Update [tests/test_bilibili.py](file:///Users/zhangyifei/Code/bilibli-summary/tests/test_bilibili.py) and [tests/test_integration.py](file:///Users/zhangyifei/Code/bilibli-summary/tests/test_integration.py) to ensure [BilibiliAPI](file:///Users/zhangyifei/Code/bilibli-summary/bili_summary/bilibili.py#40-183) uses the `SESSDATA` correctly in its constructor.
+
+### Manual Verification
+- Run `bili-summary --configure` and ensure the QR code displays and polling occurs.
+- Scan the code using the Bilibili app.
+- Check `~/.bili-summary/config.yaml` to verify the `SESSDATA` is saved.
+- Run `bili-summary BV1LmPazLEsX` and verify that it downloads the official subtitles.

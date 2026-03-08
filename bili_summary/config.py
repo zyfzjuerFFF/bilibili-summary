@@ -19,6 +19,11 @@ class LLMConfig:
 
 
 @dataclass
+class BilibiliConfig:
+    sessdata: str = ""  # B站 SESSDATA Cookie
+
+
+@dataclass
 class AliyunConfig:
     api_key: str = ""  # 阿里云百炼 API Key
     region: str = "cn-beijing"
@@ -35,18 +40,23 @@ class OutputConfig:
 
 @dataclass
 class Config:
+    bilibili: BilibiliConfig = field(default_factory=BilibiliConfig)
     aliyun: AliyunConfig = field(default_factory=AliyunConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
         """从字典创建配置"""
+        bilibili_data = data.get("bilibili", {})
         aliyun_data = data.get("aliyun", {})
         asr_data = aliyun_data.get("asr", {})
         llm_data = aliyun_data.get("llm", {})
         output_data = data.get("output", {})
 
         return cls(
+            bilibili=BilibiliConfig(
+                sessdata=bilibili_data.get("sessdata", "")
+            ),
             aliyun=AliyunConfig(
                 api_key=aliyun_data.get("api_key", aliyun_data.get("access_key_id", "")),
                 region=aliyun_data.get("region", "cn-beijing"),
@@ -90,6 +100,9 @@ class ConfigManager:
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
         data = {
+            "bilibili": {
+                "sessdata": config.bilibili.sessdata,
+            },
             "aliyun": {
                 "api_key": config.aliyun.api_key,
                 "region": config.aliyun.region,
@@ -113,9 +126,17 @@ class ConfigManager:
     def get_template(self) -> str:
         """获取配置模板"""
         return """# Bilibili Summary 配置文件
+
+# Bilibili 配置
+bilibili:
+  # Bilibili SESSDATA Cookie (用于获取需要登录才能访问的原生字幕)
+  # 可以留空。遇到需要登录的原生字幕时，程序会在终端提示扫码登录并自动保存
+  # 也可以手动填写浏览器 Cookies 中的 SESSDATA 值
+  sessdata: ""
+
+# 阿里云配置
 # 请填写你的阿里云百炼 API Key
 # 获取方式: https://bailian.console.aliyun.com/#/api-key
-
 aliyun:
   # 阿里云百炼 API Key (Bearer Token)
   api_key: "your-api-key"

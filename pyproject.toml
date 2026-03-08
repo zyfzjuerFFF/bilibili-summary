@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0",
     "yt-dlp>=2023.0",
     "dashscope>=1.15.0",
+    "qrcode>=7.4.2",
 ]
 
 [project.scripts]

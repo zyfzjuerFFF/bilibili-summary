@@ -1,8 +1,10 @@
 # tests/test_bilibili.py
+import json
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 import httpx
-from bili_summary.bilibili import BilibiliAPI, VideoInfo, SubtitleItem
+
+from bili_summary.bilibili import BilibiliAPI, VideoInfo
 
 
 class TestVideoInfo:
@@ -23,6 +25,10 @@ class TestBilibiliAPI:
     @pytest.fixture
     def api(self):
         return BilibiliAPI()
+
+    def test_constructor_sets_sessdata_cookie(self):
+        api = BilibiliAPI(sessdata="test-sessdata")
+        assert api.client.cookies.get("SESSDATA") == "test-sessdata"
 
     @pytest.mark.asyncio
     async def test_get_video_info_success(self, api):
@@ -85,3 +91,74 @@ class TestBilibiliAPI:
         assert len(subtitles) == 1
         assert subtitles[0].language == "zh-CN"
         assert msg == "成功获取字幕列表"
+
+    @pytest.mark.asyncio
+    async def test_get_subtitles_requires_login_message(self, api):
+        mock_response = {
+            "code": 0,
+            "data": {
+                "need_login_subtitle": True,
+                "subtitle": {"subtitles": []},
+            },
+        }
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_get.return_value = Mock(
+                json=lambda: mock_response, status_code=200
+            )
+            subtitles, msg = await api.get_subtitle_list("BV1xx411c7mD", 123456)
+
+        assert subtitles == []
+        assert msg == "获取原生字幕需登录，当前未登录无法获取"
+
+    @pytest.mark.asyncio
+    async def test_generate_qr_code_success(self, api):
+        mock_response = {
+            "code": 0,
+            "data": {
+                "url": "https://passport.bilibili.com/h5-app/passport/login/scan",
+                "qrcode_key": "test-key",
+            },
+        }
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_get.return_value = Mock(
+                json=lambda: mock_response, status_code=200
+            )
+            qr_url, qr_key = await api.generate_qr_code()
+
+        called_url = mock_get.call_args.args[0]
+        assert called_url.startswith("https://passport.bilibili.com/")
+        assert qr_url == mock_response["data"]["url"]
+        assert qr_key == "test-key"
+
+    @pytest.mark.asyncio
+    async def test_generate_qr_code_non_json_response(self, api):
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_get.return_value = Mock(
+                status_code=200,
+                text="<html>blocked</html>",
+                json=Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0)),
+            )
+            with pytest.raises(Exception, match="非 JSON 响应"):
+                await api.generate_qr_code()
+
+    @pytest.mark.asyncio
+    async def test_poll_qr_code_success_reads_sessdata(self, api):
+        mock_response = {
+            "code": 0,
+            "data": {"code": 0, "message": "成功"},
+        }
+        api.client.cookies.set("SESSDATA", "from-client", domain=".bilibili.com", path="/")
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_get.return_value = Mock(
+                json=lambda: mock_response,
+                status_code=200,
+                cookies=httpx.Cookies(),
+            )
+            success, msg, sessdata = await api.poll_qr_code("test-key")
+
+        assert success is True
+        assert msg == "登录成功"
+        assert sessdata == "from-client"

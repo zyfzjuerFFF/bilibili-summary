@@ -22,6 +22,22 @@ class TestSummarizer:
     def test_init(self, summarizer):
         assert summarizer.model == "qwen-test"
 
+    def test_build_user_prompt_includes_context_and_detail_requirements(self, summarizer):
+        prompt = summarizer._build_user_prompt(
+            "这是字幕内容",
+            {
+                "title": "Python 性能优化实战",
+                "owner_name": "测试UP主",
+                "desc": "讲解性能分析和优化步骤",
+            },
+        )
+
+        assert "视频标题: Python 性能优化实战" in prompt
+        assert "UP主: 测试UP主" in prompt
+        assert "视频简介: 讲解性能分析和优化步骤" in prompt
+        assert "如果视频属于技术、学习、教程或课程类" in prompt
+        assert "逻辑步骤" in prompt
+
     @patch("httpx.AsyncClient.post")
     async def test_summarize(self, mock_post, summarizer):
         mock_response = Mock()
@@ -47,3 +63,5 @@ class TestSummarizer:
 
         assert isinstance(result, SummaryResult)
         assert result.title == "测试标题"
+        assert result.key_points == ["要点1", "要点2"]
+        assert result.highlights == {"重点": "内容"}

@@ -41,14 +41,32 @@ class BilibiliAPI:
     """Bilibili API客户端"""
 
     BASE_URL = "https://api.bilibili.com"
+    PASSPORT_URL = "https://passport.bilibili.com"
 
-    def __init__(self):
+    def __init__(self, sessdata: Optional[str] = None):
+        cookies = httpx.Cookies()
+        if sessdata:
+            cookies.set("SESSDATA", sessdata, domain=".bilibili.com", path="/")
+
         self.client = httpx.AsyncClient(
             headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
+                "Referer": "https://www.bilibili.com/",
             },
+            cookies=cookies,
             timeout=30.0,
         )
+
+    def _parse_json_response(self, response: httpx.Response, action: str) -> Dict[str, Any]:
+        """解析 JSON 响应，并在非 JSON 时给出清晰错误"""
+        try:
+            return response.json()
+        except json.JSONDecodeError as exc:
+            snippet = response.text.strip().replace("\n", " ")[:120]
+            raise Exception(
+                f"{action}失败: Bilibili 返回了非 JSON 响应 "
+                f"(HTTP {response.status_code}, 内容片段: {snippet or '<empty>'})"
+            ) from exc
 
     async def get_video_info(self, bvid: str) -> VideoInfo:
         """
@@ -64,7 +82,7 @@ class BilibiliAPI:
         params = {"bvid": bvid}
 
         response = await self.client.get(url, params=params)
-        data = response.json()
+        data = self._parse_json_response(response, "获取视频信息")
 
         if data.get("code") != 0:
             raise Exception(f"获取视频信息失败: {data.get('message', '未知错误')}")
@@ -96,7 +114,7 @@ class BilibiliAPI:
         params = {"bvid": bvid, "cid": cid}
 
         response = await self.client.get(url, params=params)
-        data = response.json()
+        data = self._parse_json_response(response, "获取字幕列表")
 
         if data.get("code") != 0:
             return [], f"API请求失败: {data.get('message', '未知错误')}"
@@ -134,7 +152,7 @@ class BilibiliAPI:
             字幕项列表
         """
         response = await self.client.get(subtitle_url)
-        data = response.json()
+        data = self._parse_json_response(response, "下载字幕")
 
         body = data.get("body", [])
         return [
@@ -171,6 +189,52 @@ class BilibiliAPI:
             格式化后的字幕文本
         """
         return "\n".join([item.content for item in subtitles])
+
+    async def generate_qr_code(self) -> tuple[str, str]:
+        """
+        生成登录二维码
+        
+        Returns:
+            (二维码内容URL, qrcode_key)
+        """
+        url = f"{self.PASSPORT_URL}/x/passport-login/web/qrcode/generate"
+        response = await self.client.get(url)
+        data = self._parse_json_response(response, "获取二维码")
+        
+        if data.get("code") != 0:
+            raise Exception(f"获取二维码失败: {data.get('message', '未知错误')}")
+            
+        return data["data"]["url"], data["data"]["qrcode_key"]
+
+    async def poll_qr_code(self, qrcode_key: str) -> tuple[bool, str, Optional[str]]:
+        """
+        轮询二维码状态
+        
+        Args:
+            qrcode_key: 二维码的key
+            
+        Returns:
+            (是否已登录, 提示信息, SESSDATA)
+        """
+        url = f"{self.PASSPORT_URL}/x/passport-login/web/qrcode/poll"
+        params = {"qrcode_key": qrcode_key}
+        
+        response = await self.client.get(url, params=params)
+        data = self._parse_json_response(response, "轮询二维码")
+        
+        if data.get("code") != 0:
+            return False, f"轮询失败: {data.get('message', '未知错误')}", None
+            
+        # 0：成功，86038：二维码已失效，86090：二维码已扫码未确认，86101：未扫码
+        status_code = data["data"]["code"]
+        message = data["data"]["message"]
+        
+        if status_code == 0:
+            # 登录成功，提取 Cookie 中的 SESSDATA
+            sessdata = response.cookies.get("SESSDATA") or self.client.cookies.get("SESSDATA")
+            return True, "登录成功", sessdata
+            
+        return False, message, None
 
     async def close(self):
         """关闭HTTP客户端"""

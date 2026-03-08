@@ -8,7 +8,6 @@ import click
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.panel import Panel
-from rich.text import Text
 
 from bili_summary.config import ConfigManager, Config
 from bili_summary.bilibili import BilibiliAPI
@@ -16,7 +15,9 @@ from bili_summary.asr import AliyunASR
 from bili_summary.downloader import AudioDownloader
 from bili_summary.summarizer import Summarizer
 from bili_summary.output import OutputFormatter
-from bili_summary.utils import extract_bv, validate_url
+from bili_summary.utils import extract_bv
+
+import qrcode
 
 console = Console()
 
@@ -36,6 +37,80 @@ def print_info(message: str):
     console.print(f"[blue]ℹ[/blue] {message}")
 
 
+def render_qr_code(qr_url: str):
+    """在终端中渲染二维码"""
+    qr = qrcode.QRCode(version=1, box_size=1, border=2)
+    qr.add_data(qr_url)
+    qr.make(fit=True)
+
+    console.print("\n请使用 Bilibili App 扫描下方二维码：\n")
+    qr.print_ascii(tty=sys.stdout.isatty())
+
+
+async def login_bilibili_via_qr() -> str:
+    """通过二维码登录 Bilibili 并返回 SESSDATA"""
+    api = BilibiliAPI()
+
+    try:
+        qr_url, qr_key = await api.generate_qr_code()
+        render_qr_code(qr_url)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("等待扫码确认中...", total=None)
+
+            while True:
+                success, msg, sessdata = await api.poll_qr_code(qr_key)
+                if success:
+                    if sessdata:
+                        progress.update(task, description="登录成功，SESSDATA 已获取")
+                        return sessdata
+
+                    progress.update(task, description="[red]登录成功，但未获取到 SESSDATA[/red]")
+                    print_error("登录成功，但未能提取 SESSDATA")
+                    return ""
+
+                if msg == "二维码已失效" or msg.startswith("轮询失败"):
+                    progress.update(task, description=f"[red]{msg}[/red]")
+                    print_error(msg)
+                    return ""
+
+                progress.update(task, description=f"等待扫码确认中... 当前状态: {msg}")
+                await asyncio.sleep(2)
+    finally:
+        await api.close()
+
+
+def subtitle_login_required(message: str) -> bool:
+    """判断当前字幕获取是否要求登录"""
+    return message == "获取原生字幕需登录，当前未登录无法获取"
+
+
+async def refresh_bilibili_login(api: BilibiliAPI, config: Config) -> BilibiliAPI:
+    """在需要时引导用户扫码登录，并返回可复用的新 API 客户端"""
+    if not sys.stdin.isatty():
+        print_info("该视频原生字幕需要 Bilibili 登录，当前为非交互环境，跳过扫码登录。")
+        return api
+
+    print_info("该视频原生字幕需要 Bilibili 登录，当前登录态不可用或已过期。")
+    if not click.confirm("是否现在扫码登录以获取原生字幕？", default=True):
+        return api
+
+    sessdata = await login_bilibili_via_qr()
+    if not sessdata:
+        return api
+
+    config.bilibili.sessdata = sessdata
+    ConfigManager().save(config)
+    print_success("Bilibili 登录已更新并保存到 ~/.bili-summary/config.yaml")
+
+    await api.close()
+    return BilibiliAPI(sessdata=sessdata)
+
+
 async def process_video(
     url_or_bv: str,
     config: Config,
@@ -43,7 +118,7 @@ async def process_video(
     output_format: str,
 ):
     """处理单个视频"""
-    api = BilibiliAPI()
+    api = BilibiliAPI(sessdata=config.bilibili.sessdata)
 
     try:
         # 提取BV号
@@ -78,6 +153,13 @@ async def process_video(
         ) as progress:
             task = progress.add_task("获取官方字幕...", total=None)
             subtitles, msg = await api.get_subtitle_list(bvid, video_info.cid)
+
+            if not subtitles and subtitle_login_required(msg):
+                progress.stop()
+                api = await refresh_bilibili_login(api, config)
+                progress.start()
+                progress.update(task, description="重新获取官方字幕...")
+                subtitles, msg = await api.get_subtitle_list(bvid, video_info.cid)
 
             if subtitles:
                 # 优先使用中文或第一个字幕
@@ -209,14 +291,22 @@ def main(url_or_bv: Optional[str], output: Optional[str], output_format: str, co
 
     # 配置模式
     if configure:
+        config = config_manager.load() if config_manager.exists() else Config()
+
         console.print(Panel("配置阿里云百炼", border_style="blue"))
         console.print("获取 API Key: https://bailian.console.aliyun.com/#/api-key")
+        if config.aliyun.api_key:
+            console.print("已检测到现有 API Key，直接回车可保留当前值。")
         console.print()
 
-        api_key = click.prompt("API Key", hide_input=True)
-        region = click.prompt("Region", default="cn-beijing")
+        api_key = click.prompt(
+            "API Key",
+            default=config.aliyun.api_key,
+            hide_input=True,
+            show_default=False,
+        )
+        region = click.prompt("Region", default=config.aliyun.region)
 
-        config = Config()
         config.aliyun.api_key = api_key
         config.aliyun.region = region
 

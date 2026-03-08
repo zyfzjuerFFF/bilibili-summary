@@ -23,4 +23,4 @@ class TestAudioDownloader:
         result = downloader.extract_audio("BV1xx411c7mD")
 
         mock_ydl.extract_info.assert_called_once()
-        assert result == "/tmp/test.m4a"
+        assert result == "/tmp/test.mp3"

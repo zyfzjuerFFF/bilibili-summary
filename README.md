@@ -18,15 +18,21 @@ pip install -e .
 
 ## 配置
 
-首次使用需要配置阿里云百炼 API Key：
+首次使用建议运行交互式配置，填写阿里云百炼 API Key：
 
 ```bash
 bili-summary --configure
 ```
 
+如果某个视频的官方字幕需要登录，而当前 `SESSDATA` 不存在或已过期，程序会在处理该视频时弹出终端二维码引导登录，并自动保存新的 `SESSDATA`。
+
 或手动创建 `~/.bili-summary/config.yaml`：
 
 ```yaml
+bilibili:
+  # 可留空；需要登录态字幕时，程序会按需触发二维码登录并自动回写
+  sessdata: ""
+
 aliyun:
   # 从 https://bailian.console.aliyun.com/#/api-key 获取 API Key
   api_key: "your-api-key"

@@ -1,6 +1,6 @@
 """集成测试"""
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 import tempfile
 import os
 
@@ -11,13 +11,15 @@ from bili_summary.config import Config, AliyunConfig, ASRConfig, LLMConfig
 class TestIntegration:
     @pytest.fixture
     def config(self):
-        return Config(
+        config = Config(
             aliyun=AliyunConfig(
                 api_key="test-key",
                 asr=ASRConfig(model="test-asr"),
                 llm=LLMConfig(model="test-llm"),
             )
         )
+        config.bilibili.sessdata = "test-sessdata"
+        return config
 
     @pytest.mark.asyncio
     @patch("bili_summary.cli.BilibiliAPI")
@@ -58,11 +60,88 @@ class TestIntegration:
 
         try:
             await process_video("BV1xx", config, output_file, "markdown")
+            mock_api_class.assert_called_once_with(sessdata="test-sessdata")
 
             # 验证文件被写入
             assert os.path.exists(output_file)
             content = open(output_file, 'r').read()
             assert "总结标题" in content
+        finally:
+            if os.path.exists(output_file):
+                os.remove(output_file)
+
+    @pytest.mark.asyncio
+    @patch("bili_summary.cli.ConfigManager")
+    @patch("bili_summary.cli.click.confirm", return_value=True)
+    @patch("bili_summary.cli.login_bilibili_via_qr", new_callable=AsyncMock, return_value="fresh-sessdata")
+    @patch("bili_summary.cli.BilibiliAPI")
+    @patch("bili_summary.cli.Summarizer")
+    async def test_login_on_demand_for_official_subtitle(
+        self,
+        mock_summarizer_class,
+        mock_api_class,
+        mock_login,
+        mock_confirm,
+        mock_config_manager_class,
+        config,
+        monkeypatch,
+    ):
+        """测试原生字幕需要登录时触发扫码并保存新登录态"""
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+        initial_api = Mock()
+        refreshed_api = Mock()
+        mock_api_class.side_effect = [initial_api, refreshed_api]
+
+        video_info = Mock(
+            bvid="BV1xx",
+            cid=123,
+            title="测试",
+            owner_name="UP",
+            duration=300,
+        )
+        initial_api.get_video_info = AsyncMock(return_value=video_info)
+        initial_api.get_subtitle_list = AsyncMock(
+            return_value=([], "获取原生字幕需登录，当前未登录无法获取")
+        )
+        initial_api.close = AsyncMock()
+
+        refreshed_api.get_video_info = AsyncMock(return_value=video_info)
+        refreshed_api.get_subtitle_list = AsyncMock(return_value=([Mock(
+            language="zh-CN",
+            subtitle_url="http://test.com/sub.json",
+            is_ai_generated=False,
+        )], "成功获取字幕列表"))
+        refreshed_api.download_subtitle = AsyncMock(return_value=[Mock(content="字幕内容")])
+        refreshed_api.format_subtitle_text = Mock(return_value="字幕内容")
+        refreshed_api.close = AsyncMock()
+
+        mock_summarizer = Mock()
+        mock_summarizer_class.return_value = mock_summarizer
+        mock_summarizer.summarize = AsyncMock(return_value=Mock(
+            title="总结标题",
+            key_points=["要点1"],
+            highlights={},
+            timestamps=[],
+        ))
+
+        mock_config_manager = Mock()
+        mock_config_manager_class.return_value = mock_config_manager
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            output_file = f.name
+
+        try:
+            config.bilibili.sessdata = ""
+            await process_video("BV1xx", config, output_file, "markdown")
+
+            mock_confirm.assert_called_once()
+            mock_login.assert_awaited_once()
+            mock_config_manager.save.assert_called_once_with(config)
+            assert config.bilibili.sessdata == "fresh-sessdata"
+            assert mock_api_class.call_args_list[0].kwargs == {"sessdata": ""}
+            assert mock_api_class.call_args_list[1].kwargs == {"sessdata": "fresh-sessdata"}
+            refreshed_api.get_subtitle_list.assert_awaited_once_with("BV1xx", 123)
         finally:
             if os.path.exists(output_file):
                 os.remove(output_file)
