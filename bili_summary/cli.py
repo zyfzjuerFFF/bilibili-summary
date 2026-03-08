@@ -1,0 +1,241 @@
+"""命令行入口"""
+import asyncio
+import sys
+from pathlib import Path
+from typing import Optional
+
+import click
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.panel import Panel
+from rich.text import Text
+
+from bili_summary.config import ConfigManager, Config
+from bili_summary.bilibili import BilibiliAPI
+from bili_summary.asr import AliyunASR
+from bili_summary.downloader import AudioDownloader
+from bili_summary.summarizer import Summarizer
+from bili_summary.output import OutputFormatter
+from bili_summary.utils import extract_bv, validate_url
+
+console = Console()
+
+
+def print_error(message: str):
+    """打印错误信息"""
+    console.print(f"[bold red]错误:[/bold red] {message}")
+
+
+def print_success(message: str):
+    """打印成功信息"""
+    console.print(f"[bold green]✓[/bold green] {message}")
+
+
+def print_info(message: str):
+    """打印信息"""
+    console.print(f"[blue]ℹ[/blue] {message}")
+
+
+async def process_video(
+    url_or_bv: str,
+    config: Config,
+    output_file: Optional[str],
+    output_format: str,
+):
+    """处理单个视频"""
+    api = BilibiliAPI()
+
+    try:
+        # 提取BV号
+        try:
+            bvid = extract_bv(url_or_bv)
+            print_info(f"提取到BV号: {bvid}")
+        except ValueError as e:
+            print_error(f"无法识别BV号: {e}")
+            return
+
+        # 获取视频信息
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("获取视频信息...", total=None)
+            video_info = await api.get_video_info(bvid)
+            progress.update(task, completed=True)
+
+        print_success(f"视频标题: {video_info.title}")
+        print_info(f"UP主: {video_info.owner_name}")
+
+        # 获取字幕
+        subtitle_text = ""
+        subtitle_source = ""
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            # 尝试官方字幕
+            task = progress.add_task("获取官方字幕...", total=None)
+            subtitles = await api.get_subtitle_list(bvid, video_info.cid)
+
+            if subtitles:
+                # 优先使用中文或第一个字幕
+                zh_subs = [s for s in subtitles if "zh" in s.language.lower()]
+                selected = zh_subs[0] if zh_subs else subtitles[0]
+
+                subtitle_items = await api.download_subtitle(selected.subtitle_url)
+                subtitle_text = api.format_subtitle_text(subtitle_items)
+                subtitle_source = "官方字幕" + (
+                    "(AI生成)" if selected.is_ai_generated else ""
+                )
+                progress.update(task, description=f"获取到官方字幕 ({len(subtitle_items)} 句)")
+            else:
+                progress.update(task, description="无官方字幕，准备使用ASR...")
+
+                # 使用ASR
+                if not config.aliyun.access_key_id:
+                    print_error("未配置阿里云API密钥，无法使用ASR")
+                    return
+
+                downloader = AudioDownloader()
+                asr = AliyunASR(config)
+
+                try:
+                    progress.update(task, description="下载音频...")
+                    audio_path = await asyncio.to_thread(downloader.extract_audio, bvid)
+
+                    progress.update(task, description="识别音频...")
+                    asr_result = await asr.transcribe(audio_path)
+                    subtitle_text = asr.format_as_subtitle(asr_result)
+                    subtitle_source = "ASR识别"
+
+                    # 清理临时文件
+                    downloader.cleanup(audio_path)
+
+                except Exception as e:
+                    print_error(f"ASR识别失败: {e}")
+                    subtitle_source = "无字幕"
+
+        if not subtitle_text.strip():
+            print_error("未能获取到任何字幕内容")
+            return
+
+        print_success(f"字幕来源: {subtitle_source}")
+        print_info(f"字幕长度: {len(subtitle_text)} 字符")
+
+        # 生成总结
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("生成总结...", total=None)
+            summarizer = Summarizer(config)
+            summary = await summarizer.summarize(
+                subtitle_text,
+                {
+                    "bvid": video_info.bvid,
+                    "title": video_info.title,
+                    "owner_name": video_info.owner_name,
+                    "duration": video_info.duration,
+                },
+            )
+            progress.update(task, completed=True)
+
+        # 格式化输出
+        formatter = OutputFormatter(output_format)
+        output = formatter.format(
+            summary,
+            {
+                "bvid": video_info.bvid,
+                "title": video_info.title,
+                "owner_name": video_info.owner_name,
+                "duration": video_info.duration,
+            },
+            subtitle_source,
+        )
+
+        # 输出结果
+        if output_file:
+            Path(output_file).write_text(output, encoding="utf-8")
+            print_success(f"总结已保存到: {output_file}")
+        else:
+            console.print()
+            console.print(Panel(output, title="视频总结", border_style="green"))
+
+    except Exception as e:
+        print_error(f"处理失败: {e}")
+        raise
+    finally:
+        await api.close()
+
+
+@click.command()
+@click.argument("url_or_bv")
+@click.option(
+    "-o",
+    "--output",
+    help="输出文件路径",
+    type=click.Path(),
+)
+@click.option(
+    "-f",
+    "--format",
+    "output_format",
+    default="markdown",
+    type=click.Choice(["markdown", "json", "text"]),
+    help="输出格式",
+)
+@click.option(
+    "--configure",
+    is_flag=True,
+    help="交互式配置",
+)
+def main(url_or_bv: str, output: Optional[str], output_format: str, configure: bool):
+    """
+    Bilibili 视频总结工具
+
+    示例:
+        bili-summary BV1xx411c7mD
+        bili-summary https://www.bilibili.com/video/BV1xx411c7mD
+        bili-summary BV1xx411c7mD -o summary.md
+        bili-summary BV1xx411c7mD --format json
+    """
+    config_manager = ConfigManager()
+
+    # 配置模式
+    if configure:
+        console.print(Panel("配置阿里云百炼", border_style="blue"))
+
+        access_key = click.prompt("Access Key ID", hide_input=False)
+        access_secret = click.prompt("Access Key Secret", hide_input=True)
+        region = click.prompt("Region", default="cn-beijing")
+
+        config = Config()
+        config.aliyun.access_key_id = access_key
+        config.aliyun.access_key_secret = access_secret
+        config.aliyun.region = region
+
+        config_manager.save(config)
+        print_success("配置已保存到 ~/.bili-summary/config.yaml")
+        return
+
+    # 检查配置
+    if not config_manager.exists():
+        print_error("未找到配置文件，请先运行: bili-summary --configure")
+        sys.exit(1)
+
+    config = config_manager.load()
+
+    if not config.aliyun.access_key_id:
+        print_error("阿里云 Access Key 未配置")
+        sys.exit(1)
+
+    # 处理视频
+    asyncio.run(process_video(url_or_bv, config, output, output_format))
+
+
+if __name__ == "__main__":
+    main()
