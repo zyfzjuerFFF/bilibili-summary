@@ -18,3 +18,20 @@ dependencies = [
 
 [project.scripts]
 bili-summary = "bili_summary.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-httpx>=0.35.0",
+    "black>=24.0",
+    "isort>=5.0",
+    "mypy>=1.0",
+    "ruff>=0.6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+asyncio_mode = "auto"
