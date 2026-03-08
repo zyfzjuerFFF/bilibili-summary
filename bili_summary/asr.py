@@ -103,12 +103,13 @@ class AliyunASR:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "X-DashScope-OssResourceResolve": "enable",  # 启用OSS资源解析
         }
 
         payload = {
             "model": self.model,
             "input": {
-                "file_url": file_url,
+                "file_urls": [file_url],  # 使用 file_urls 数组
             },
             "parameters": {
                 "disfluency_removal": True,
