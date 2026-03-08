@@ -70,8 +70,14 @@ class AliyunASR:
         if response.status_code not in (200, 201):
             raise Exception(f"文件上传失败: {result}")
 
-        # 获取文件URL
-        file_id = result.get("id")
+        # 获取文件ID - 从 uploaded_files 数组中获取
+        data = result.get("data", {})
+        uploaded_files = data.get("uploaded_files", [])
+
+        if not uploaded_files:
+            raise Exception(f"无法获取上传文件信息: {result}")
+
+        file_id = uploaded_files[0].get("file_id")
         if not file_id:
             raise Exception(f"无法获取文件ID: {result}")
 
