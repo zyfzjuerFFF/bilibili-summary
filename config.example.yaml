@@ -1,0 +1,18 @@
+# config.example.yaml
+aliyun:
+  access_key_id: "your-access-key-id"
+  access_key_secret: "your-access-key-secret"
+  region: "cn-beijing"
+
+  asr:
+    model: "paraformer-realtime-v1"
+
+  llm:
+    model: "qwen-plus"
+    max_tokens: 2000
+    temperature: 0.7
+
+output:
+  format: "markdown"
+  language: "zh"
+  include_timestamps: true
