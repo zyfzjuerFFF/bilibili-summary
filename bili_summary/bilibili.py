@@ -81,7 +81,7 @@ class BilibiliAPI:
             pubdate=video_data.get("pubdate", 0),
         )
 
-    async def get_subtitle_list(self, bvid: str, cid: int) -> List[SubtitleInfo]:
+    async def get_subtitle_list(self, bvid: str, cid: int) -> tuple[List[SubtitleInfo], str]:
         """
         获取视频字幕列表
 
@@ -90,7 +90,7 @@ class BilibiliAPI:
             cid: 视频cid
 
         Returns:
-            字幕信息列表
+            (字幕信息列表, 提示信息)
         """
         url = f"{self.BASE_URL}/x/player/wbi/v2"
         params = {"bvid": bvid, "cid": cid}
@@ -99,10 +99,16 @@ class BilibiliAPI:
         data = response.json()
 
         if data.get("code") != 0:
-            return []
+            return [], f"API请求失败: {data.get('message', '未知错误')}"
+            
+        need_login = data.get("data", {}).get("need_login_subtitle", False)
 
         subtitle_data = data.get("data", {}).get("subtitle", {})
         subtitles = subtitle_data.get("subtitles", [])
+        
+        msg = "成功获取字幕列表" if subtitles else "视频无字幕"
+        if not subtitles and need_login:
+            msg = "获取原生字幕需登录，当前未登录无法获取"
 
         return [
             SubtitleInfo(
@@ -115,7 +121,7 @@ class BilibiliAPI:
                 is_ai_generated=s.get("type", "") == "AI",
             )
             for s in subtitles
-        ]
+        ], msg
 
     async def download_subtitle(self, subtitle_url: str) -> List[SubtitleItem]:
         """
@@ -151,7 +157,7 @@ class BilibiliAPI:
         Returns:
             是否有官方字幕
         """
-        subtitles = await self.get_subtitle_list(bvid, cid)
+        subtitles, _ = await self.get_subtitle_list(bvid, cid)
         return len(subtitles) > 0
 
     def format_subtitle_text(self, subtitles: List[SubtitleItem]) -> str:

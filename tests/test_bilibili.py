@@ -80,7 +80,8 @@ class TestBilibiliAPI:
             mock_get.return_value = Mock(
                 json=lambda: mock_response, status_code=200
             )
-            subtitles = await api.get_subtitle_list("BV1xx411c7mD", 123456)
+            subtitles, msg = await api.get_subtitle_list("BV1xx411c7mD", 123456)
 
         assert len(subtitles) == 1
         assert subtitles[0].language == "zh-CN"
+        assert msg == "成功获取字幕列表"

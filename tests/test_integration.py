@@ -34,11 +34,11 @@ class TestIntegration:
             owner_name="UP",
             duration=300,
         ))
-        mock_api.get_subtitle_list = AsyncMock(return_value=[Mock(
+        mock_api.get_subtitle_list = AsyncMock(return_value=([Mock(
             language="zh-CN",
             subtitle_url="http://test.com/sub.json",
             is_ai_generated=False,
-        )])
+        )], "成功获取字幕列表"))
         mock_api.download_subtitle = AsyncMock(return_value=[Mock(content="字幕内容")])
         mock_api.format_subtitle_text = Mock(return_value="字幕内容")
         mock_api.close = AsyncMock()

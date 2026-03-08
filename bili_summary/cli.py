@@ -76,9 +76,8 @@ async def process_video(
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            # 尝试官方字幕
             task = progress.add_task("获取官方字幕...", total=None)
-            subtitles = await api.get_subtitle_list(bvid, video_info.cid)
+            subtitles, msg = await api.get_subtitle_list(bvid, video_info.cid)
 
             if subtitles:
                 # 优先使用中文或第一个字幕
@@ -92,7 +91,10 @@ async def process_video(
                 )
                 progress.update(task, description=f"获取到官方字幕 ({len(subtitle_items)} 句)")
             else:
-                progress.update(task, description="无官方字幕，准备使用ASR...")
+                progress.stop()
+                print_info(f"官方字幕获取情况: {msg}")
+                progress.start()
+                progress.update(task, description=f"无有效官方字幕，准备使用ASR...")
 
                 # 使用ASR
                 if not config.aliyun.api_key:
