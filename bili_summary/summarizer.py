@@ -39,7 +39,7 @@ class Summarizer:
         self.model = config.aliyun.llm.model
         self.max_tokens = config.aliyun.llm.max_tokens
         self.temperature = config.aliyun.llm.temperature
-        self.endpoint = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+        self.endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
     async def summarize(
         self,
@@ -70,17 +70,13 @@ class Summarizer:
 
         payload = {
             "model": self.model,
-            "input": {
-                "messages": [
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ]
-            },
-            "parameters": {
-                "max_tokens": self.max_tokens,
-                "temperature": self.temperature,
-                "result_format": "message",
-            },
+            "messages": [
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "response_format": {"type": "json_object"}
         }
 
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -93,8 +89,7 @@ class Summarizer:
             raise Exception(f"总结请求失败: {result}")
 
         # 解析结果
-        output = result.get("output", {})
-        choices = output.get("choices", [])
+        choices = result.get("choices", [])
 
         if not choices:
             raise Exception("总结结果为空")

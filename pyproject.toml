@@ -14,6 +14,7 @@ dependencies = [
     "httpx>=0.25.0",
     "pyyaml>=6.0",
     "yt-dlp>=2023.0",
+    "dashscope>=1.15.0",
 ]
 
 [project.scripts]

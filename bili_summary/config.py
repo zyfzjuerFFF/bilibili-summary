@@ -8,7 +8,7 @@ import yaml
 
 @dataclass
 class ASRConfig:
-    model: str = "paraformer-realtime-v1"
+    model: str = "paraformer-v1"
 
 
 @dataclass
@@ -50,7 +50,7 @@ class Config:
             aliyun=AliyunConfig(
                 api_key=aliyun_data.get("api_key", aliyun_data.get("access_key_id", "")),
                 region=aliyun_data.get("region", "cn-beijing"),
-                asr=ASRConfig(model=asr_data.get("model", "paraformer-realtime-v1")),
+                asr=ASRConfig(model=asr_data.get("model", "paraformer-v1")),
                 llm=LLMConfig(
                     model=llm_data.get("model", "qwen-plus"),
                     max_tokens=llm_data.get("max_tokens", 2000),
@@ -123,7 +123,7 @@ aliyun:
 
   # ASR 语音识别配置
   asr:
-    model: "paraformer-realtime-v1"
+    model: "paraformer-v1"
 
   # LLM 总结模型配置
   llm:

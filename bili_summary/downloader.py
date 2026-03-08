@@ -20,7 +20,7 @@ class AudioDownloader:
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
-                    "preferredcodec": "m4a",
+                    "preferredcodec": "mp3",
                     "preferredquality": "192",
                 }
             ],
@@ -48,8 +48,8 @@ class AudioDownloader:
 
             # 获取最终音频文件路径 (yt-dlp会根据postprocessor生成最终文件名)
             audio_path = ydl.prepare_filename(info)
-            # 由于postprocessor会将文件转为m4a格式，需要替换扩展名
-            audio_path = audio_path.rsplit(".", 1)[0] + ".m4a"
+            # 由于postprocessor会将文件转为mp3格式，需要替换扩展名
+            audio_path = audio_path.rsplit(".", 1)[0] + ".mp3"
             return audio_path
 
     def cleanup(self, file_path: str):
