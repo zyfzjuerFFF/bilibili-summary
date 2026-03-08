@@ -1,4 +1,5 @@
 """视频内容总结模块"""
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
@@ -18,6 +19,8 @@ class SummaryResult:
 
 class Summarizer:
     """基于阿里云百炼的内容总结器"""
+
+    REQUEST_RETRIES = 3
 
     SYSTEM_PROMPT = """你是一个专业的视频内容分析师和知识整理助手。你的目标不是泛泛概括，而是基于字幕内容产出全面、准确、结构清晰、可执行的高质量总结。
 
@@ -88,29 +91,15 @@ class Summarizer:
             "Content-Type": "application/json",
         }
 
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "response_format": {"type": "json_object"}
-        }
+        payload = self._build_payload(user_prompt)
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                self.endpoint, headers=headers, json=payload
-            )
-            result = response.json()
+        result = await self._request_summary(headers, payload)
 
-        if response.status_code != 200:
+        choices = result.get("choices") or result.get("output", {}).get("choices", [])
+        if not choices and "output" not in result:
             raise Exception(f"总结请求失败: {result}")
 
         # 解析结果
-        choices = result.get("choices") or result.get("output", {}).get("choices", [])
-
         if not choices:
             raise Exception("总结结果为空")
 
@@ -133,6 +122,74 @@ class Summarizer:
                 highlights={},
                 timestamps=[],
             )
+
+    async def _request_summary(
+        self,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """请求总结接口，并在网络波动时自动重试。"""
+        timeout = httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, self.REQUEST_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.post(
+                        self.endpoint,
+                        headers=headers,
+                        json=payload,
+                    )
+
+                try:
+                    result = response.json()
+                except json.JSONDecodeError as exc:
+                    snippet = response.text.strip().replace("\n", " ")[:120]
+                    raise Exception(
+                        f"总结请求失败: 阿里云返回了非 JSON 响应 "
+                        f"(HTTP {response.status_code}, 内容片段: {snippet or '<empty>'})"
+                    ) from exc
+
+                if response.status_code == 200:
+                    return result
+
+                raise Exception(f"总结请求失败: {result}")
+            except httpx.TimeoutException as exc:
+                last_error = exc
+                if attempt == self.REQUEST_RETRIES:
+                    break
+                await asyncio.sleep(attempt)
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt == self.REQUEST_RETRIES:
+                    break
+                await asyncio.sleep(attempt)
+
+        if isinstance(last_error, httpx.TimeoutException):
+            raise Exception("总结请求超时，请稍后重试，或检查网络 / 代理设置。") from last_error
+        if last_error is not None:
+            raise Exception(f"总结请求失败: {last_error}") from last_error
+        raise Exception("总结请求失败: 未知错误")
+
+    def _build_payload(self, user_prompt: str) -> Dict[str, Any]:
+        """构建模型请求体，并处理不同模型的兼容参数。"""
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": self.temperature,
+            "response_format": {"type": "json_object"},
+        }
+
+        # Qwen3.5 系列默认开启思考模式，结构化输出时必须显式关闭。
+        if self.model.startswith("qwen3.5-"):
+            payload["enable_thinking"] = False
+        else:
+            payload["max_tokens"] = self.max_tokens
+
+        return payload
 
     def _build_user_prompt(
         self,

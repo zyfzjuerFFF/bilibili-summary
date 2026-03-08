@@ -116,7 +116,7 @@ async def process_video(
     config: Config,
     output_file: Optional[str],
     output_format: str,
-):
+) -> bool:
     """处理单个视频"""
     api = BilibiliAPI(sessdata=config.bilibili.sessdata)
 
@@ -127,7 +127,7 @@ async def process_video(
             print_info(f"提取到BV号: {bvid}")
         except ValueError as e:
             print_error(f"无法识别BV号: {e}")
-            return
+            return False
 
         # 获取视频信息
         with Progress(
@@ -176,12 +176,12 @@ async def process_video(
                 progress.stop()
                 print_info(f"官方字幕获取情况: {msg}")
                 progress.start()
-                progress.update(task, description=f"无有效官方字幕，准备使用ASR...")
+                progress.update(task, description="无有效官方字幕，准备使用ASR...")
 
                 # 使用ASR
                 if not config.aliyun.api_key:
                     print_error("未配置阿里云API密钥，无法使用ASR")
-                    return
+                    return False
 
                 downloader = AudioDownloader()
                 asr = AliyunASR(config)
@@ -204,7 +204,7 @@ async def process_video(
 
         if not subtitle_text.strip():
             print_error("未能获取到任何字幕内容")
-            return
+            return False
 
         print_success(f"字幕来源: {subtitle_source}")
         print_info(f"字幕长度: {len(subtitle_text)} 字符")
@@ -248,10 +248,11 @@ async def process_video(
         else:
             console.print()
             console.print(Panel(output, title="视频总结", border_style="green"))
+        return True
 
     except Exception as e:
         print_error(f"处理失败: {e}")
-        raise
+        return False
     finally:
         await api.close()
 
@@ -331,7 +332,9 @@ def main(url_or_bv: Optional[str], output: Optional[str], output_format: str, co
         sys.exit(1)
 
     # 处理视频
-    asyncio.run(process_video(url_or_bv, config, output, output_format))
+    success = asyncio.run(process_video(url_or_bv, config, output, output_format))
+    if not success:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
