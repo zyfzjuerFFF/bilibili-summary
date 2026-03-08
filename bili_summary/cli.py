@@ -173,7 +173,7 @@ async def process_video(
 
 
 @click.command()
-@click.argument("url_or_bv")
+@click.argument("url_or_bv", required=False)
 @click.option(
     "-o",
     "--output",
@@ -193,7 +193,7 @@ async def process_video(
     is_flag=True,
     help="交互式配置",
 )
-def main(url_or_bv: str, output: Optional[str], output_format: str, configure: bool):
+def main(url_or_bv: Optional[str], output: Optional[str], output_format: str, configure: bool):
     """
     Bilibili 视频总结工具
 
@@ -231,6 +231,11 @@ def main(url_or_bv: str, output: Optional[str], output_format: str, configure: b
 
     if not config.aliyun.access_key_id:
         print_error("阿里云 Access Key 未配置")
+        sys.exit(1)
+
+    # 检查是否提供了 URL/BV
+    if not url_or_bv:
+        print_error("请提供视频 URL 或 BV 号")
         sys.exit(1)
 
     # 处理视频
