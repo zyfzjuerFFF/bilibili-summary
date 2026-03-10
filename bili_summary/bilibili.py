@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 import httpx
 import json
+import html
+import re
 
 
 @dataclass
@@ -37,6 +39,14 @@ class SubtitleInfo:
     is_ai_generated: bool = False
 
 
+@dataclass
+class SearchResultItem:
+    """搜索结果项"""
+    bvid: str
+    title: str
+    owner_name: str
+
+
 class BilibiliAPI:
     """Bilibili API客户端"""
 
@@ -67,6 +77,15 @@ class BilibiliAPI:
                 f"{action}失败: Bilibili 返回了非 JSON 响应 "
                 f"(HTTP {response.status_code}, 内容片段: {snippet or '<empty>'})"
             ) from exc
+
+    def _clean_search_title(self, title: str) -> str:
+        """清理搜索结果标题中的 HTML 高亮标签。"""
+        clean = re.sub(r"<[^>]+>", "", title)
+        return html.unescape(clean).strip()
+
+    def _split_search_keywords(self, keyword: str) -> List[str]:
+        """按空白拆分搜索词，得到必须全部命中的关键词。"""
+        return [part.lower() for part in re.split(r"\s+", keyword.strip()) if part]
 
     async def get_video_info(self, bvid: str) -> VideoInfo:
         """
@@ -163,6 +182,73 @@ class BilibiliAPI:
             )
             for item in body
         ]
+
+    async def search_videos(
+        self,
+        keyword: str,
+        limit: int = 20,
+        order: str = "totalrank",
+    ) -> List[SearchResultItem]:
+        """
+        根据关键词搜索视频。
+
+        Args:
+            keyword: 搜索关键词
+            limit: 返回数量上限
+            order: 排序方式，支持 totalrank / pubdate
+
+        Returns:
+            搜索结果列表
+        """
+        if limit <= 0:
+            return []
+
+        required_keywords = self._split_search_keywords(keyword)
+        await self.client.get("https://www.bilibili.com")
+
+        results: List[SearchResultItem] = []
+        page = 1
+
+        while len(results) < limit:
+            url = f"{self.BASE_URL}/x/web-interface/search/type"
+            params = {
+                "search_type": "video",
+                "keyword": keyword,
+                "order": order,
+                "page": page,
+            }
+
+            response = await self.client.get(url, params=params)
+            data = self._parse_json_response(response, "搜索视频")
+
+            if data.get("code") != 0:
+                raise Exception(f"搜索视频失败: {data.get('message', '未知错误')}")
+
+            items = data.get("data", {}).get("result", []) or []
+            if not items:
+                break
+
+            for item in items:
+                bvid = item.get("bvid", "").strip()
+                if not bvid:
+                    continue
+                title = self._clean_search_title(item.get("title", "")) or bvid
+                normalized_title = title.lower()
+                if required_keywords and not all(part in normalized_title for part in required_keywords):
+                    continue
+                results.append(
+                    SearchResultItem(
+                        bvid=bvid,
+                        title=title,
+                        owner_name=item.get("author", "").strip() or "未知UP主",
+                    )
+                )
+                if len(results) >= limit:
+                    break
+
+            page += 1
+
+        return results[:limit]
 
     async def has_official_subtitle(self, bvid: str, cid: int) -> bool:
         """

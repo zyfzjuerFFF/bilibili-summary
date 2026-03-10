@@ -5,6 +5,7 @@ Bilibili 视频字幕爬取与AI总结工具
 ## 功能特性
 
 - 支持URL或BV号输入
+- 支持按关键词搜索视频并批量汇总前 N 个结果
 - 优先获取官方字幕，无字幕自动使用阿里云ASR
 - 使用阿里云百炼大模型生成结构化总结
 - 支持 Markdown / JSON / 纯文本 输出
@@ -63,7 +64,23 @@ bili-summary BV1xx411c7mD -o summary.md
 
 # JSON格式输出
 bili-summary BV1xx411c7mD --format json
+
+# 搜索“理想 i6”，汇总综合排序前20个且标题包含全部关键词的视频
+bili-summary --search "理想 i6"
+
+# 搜索“理想 i6”，按最新发布汇总
+bili-summary --search "理想 i6" --search-order pubdate
+
+# 指定搜索数量和输出文件
+bili-summary --search "理想 i6" --limit 10 -o ideal-i6-summary.md
 ```
+
+搜索模式说明：
+
+- 搜索结果按综合排序抓取视频。
+- 可选排序有两种：`totalrank`（综合排序）和 `pubdate`（最新发布）。
+- 只有标题中同时包含全部关键词的视频才会被纳入总结；例如 `--search "理想 i6"` 会跳过只包含“理想”或只包含“i6”的视频。
+- 搜索模式当前输出为单个 Markdown 文件；未指定 `-o` 时默认写入当前目录下的 `search-summary.md`。
 
 ## 输出示例
 

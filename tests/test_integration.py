@@ -1,11 +1,12 @@
 """集成测试"""
+import os
+import tempfile
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
-import tempfile
-import os
 
-from bili_summary.cli import process_video
+from bili_summary.cli import process_search_query, process_video
 from bili_summary.config import Config, AliyunConfig, ASRConfig, LLMConfig
+from bili_summary.summarizer import SummaryResult
 
 
 class TestIntegration:
@@ -66,6 +67,74 @@ class TestIntegration:
             assert os.path.exists(output_file)
             content = open(output_file, 'r').read()
             assert "总结标题" in content
+        finally:
+            if os.path.exists(output_file):
+                os.remove(output_file)
+
+    @pytest.mark.asyncio
+    @patch("bili_summary.cli.summarize_video", new_callable=AsyncMock)
+    @patch("bili_summary.cli.BilibiliAPI")
+    async def test_search_flow_outputs_combined_markdown(
+        self,
+        mock_api_class,
+        mock_summarize_video,
+        config,
+    ):
+        """测试搜索模式会将多视频总结写入同一个 Markdown 文件"""
+        mock_api = Mock()
+        mock_api_class.return_value = mock_api
+        mock_api.search_videos = AsyncMock(return_value=[
+            Mock(bvid="BV1xx", title="理想 i6 试驾", owner_name="UP1"),
+            Mock(bvid="BV2yy", title="理想 i6 对比", owner_name="UP2"),
+        ])
+        mock_api.close = AsyncMock()
+
+        mock_summarize_video.side_effect = [
+            ({
+                "summary": SummaryResult(
+                    title="视频一总结",
+                    key_points=["要点1"],
+                    highlights={"主旨": "内容1"},
+                    timestamps=[],
+                ),
+                "video_info": {
+                    "bvid": "BV1xx",
+                    "title": "理想 i6 试驾",
+                    "owner_name": "UP1",
+                    "duration": 300,
+                },
+                "subtitle_source": "官方字幕",
+            }, mock_api),
+            ({
+                "summary": SummaryResult(
+                    title="视频二总结",
+                    key_points=["要点2"],
+                    highlights={"主旨": "内容2"},
+                    timestamps=[],
+                ),
+                "video_info": {
+                    "bvid": "BV2yy",
+                    "title": "理想 i6 对比",
+                    "owner_name": "UP2",
+                    "duration": 420,
+                },
+                "subtitle_source": "ASR识别",
+            }, mock_api),
+        ]
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            output_file = f.name
+
+        try:
+            success = await process_search_query("理想 i6", 2, "pubdate", config, output_file)
+            assert success is True
+
+            content = open(output_file, "r", encoding="utf-8").read()
+            assert "搜索结果总结：理想 i6" in content
+            assert "排序方式" in content
+            assert "最新发布" in content
+            assert "## 1. 理想 i6 试驾" in content
+            assert "## 2. 理想 i6 对比" in content
         finally:
             if os.path.exists(output_file):
                 os.remove(output_file)

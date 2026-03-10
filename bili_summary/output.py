@@ -38,6 +38,88 @@ class OutputFormatter:
         else:
             return self._format_markdown(summary, video_info, subtitle_source)
 
+    def format_search_results(
+        self,
+        keyword: str,
+        sort_label: str,
+        results: list[Dict[str, Any]],
+    ) -> str:
+        """将搜索结果的多视频总结格式化为 Markdown。"""
+        lines = [f"# 搜索结果总结：{keyword}", ""]
+        lines.append(f"- **搜索词**: {keyword}")
+        lines.append(f"- **排序方式**: {sort_label}")
+        lines.append(f"- **视频数**: {len(results)}")
+        lines.append(f"- **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append("")
+
+        if results:
+            lines.extend(["## 视频列表", ""])
+            for item in results:
+                video_info = item.get("video_info", {})
+                rank = item.get("rank", 0)
+                title = video_info.get("title", "未知标题")
+                bvid = video_info.get("bvid", "")
+                if bvid:
+                    lines.append(f"{rank}. [{title}](https://www.bilibili.com/video/{bvid})")
+                else:
+                    lines.append(f"{rank}. {title}")
+            lines.append("")
+
+        for item in results:
+            summary = item.get("summary")
+            video_info = item.get("video_info", {})
+            subtitle_source = item.get("subtitle_source", "未知")
+            error = item.get("error", "")
+            rank = item.get("rank", 0)
+
+            lines.append(f"## {rank}. {video_info.get('title', '未知标题')}")
+            lines.append("")
+            lines.append(f"- **BV号**: {video_info.get('bvid', '未知')}")
+            lines.append(f"- **UP主**: {video_info.get('owner_name', '未知')}")
+            lines.append(f"- **时长**: {format_duration(video_info.get('duration', 0))}")
+            lines.append(f"- **字幕来源**: {subtitle_source}")
+            bvid = video_info.get("bvid", "")
+            if bvid:
+                lines.append(f"- **原视频**: https://www.bilibili.com/video/{bvid}")
+            lines.append("")
+
+            if error:
+                lines.append(f"> 处理失败: {error}")
+                lines.append("")
+                continue
+
+            if summary:
+                lines.append(f"### {summary.title}")
+                lines.append("")
+
+                if summary.key_points:
+                    lines.append("### 核心要点")
+                    lines.append("")
+                    for idx, point in enumerate(summary.key_points, 1):
+                        lines.append(f"{idx}. {point}")
+                    lines.append("")
+
+                if summary.highlights:
+                    lines.append("### 关键信息")
+                    lines.append("")
+                    for key, value in summary.highlights.items():
+                        lines.append(f"- **{key}**: {value}")
+                    lines.append("")
+
+                if summary.timestamps:
+                    lines.append("### 时间戳导航")
+                    lines.append("")
+                    lines.append("| 时间 | 内容 |")
+                    lines.append("|------|------|")
+                    for ts in summary.timestamps:
+                        lines.append(f"| {ts.get('time', '--')} | {ts.get('content', '')} |")
+                    lines.append("")
+
+            lines.append("---")
+            lines.append("")
+
+        return "\n".join(lines).rstrip() + "\n"
+
     def _format_markdown(
         self,
         summary: SummaryResult,

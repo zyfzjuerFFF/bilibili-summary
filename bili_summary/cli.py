@@ -20,6 +20,10 @@ from bili_summary.utils import extract_bv
 import qrcode
 
 console = Console()
+SEARCH_ORDER_LABELS = {
+    "totalrank": "综合排序",
+    "pubdate": "最新发布",
+}
 
 
 def print_error(message: str):
@@ -111,6 +115,115 @@ async def refresh_bilibili_login(api: BilibiliAPI, config: Config) -> BilibiliAP
     return BilibiliAPI(sessdata=sessdata)
 
 
+async def summarize_video(
+    api: BilibiliAPI,
+    bvid: str,
+    config: Config,
+    summarizer: Summarizer,
+) -> tuple[dict, BilibiliAPI]:
+    """提取单个视频的字幕并生成总结。"""
+    # 获取视频信息
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("获取视频信息...", total=None)
+        video_info = await api.get_video_info(bvid)
+        progress.update(task, completed=True)
+
+    print_success(f"视频标题: {video_info.title}")
+    print_info(f"UP主: {video_info.owner_name}")
+
+    subtitle_text = ""
+    subtitle_source = ""
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("获取官方字幕...", total=None)
+        subtitles, msg = await api.get_subtitle_list(bvid, video_info.cid)
+
+        if not subtitles and subtitle_login_required(msg):
+            progress.stop()
+            api = await refresh_bilibili_login(api, config)
+            progress.start()
+            progress.update(task, description="重新获取官方字幕...")
+            subtitles, msg = await api.get_subtitle_list(bvid, video_info.cid)
+
+        if subtitles:
+            zh_subs = [s for s in subtitles if "zh" in s.language.lower()]
+            selected = zh_subs[0] if zh_subs else subtitles[0]
+
+            subtitle_items = await api.download_subtitle(selected.subtitle_url)
+            subtitle_text = api.format_subtitle_text(subtitle_items)
+            subtitle_source = "官方字幕" + (
+                "(AI生成)" if selected.is_ai_generated else ""
+            )
+            progress.update(task, description=f"获取到官方字幕 ({len(subtitle_items)} 句)")
+        else:
+            progress.stop()
+            print_info(f"官方字幕获取情况: {msg}")
+            progress.start()
+            progress.update(task, description="无有效官方字幕，准备使用ASR...")
+
+            if not config.aliyun.api_key:
+                raise Exception("未配置阿里云API密钥，无法使用ASR")
+
+            downloader = AudioDownloader()
+            asr = AliyunASR(config)
+
+            try:
+                progress.update(task, description="下载音频...")
+                audio_path = await asyncio.to_thread(downloader.extract_audio, bvid)
+
+                progress.update(task, description="识别音频...")
+                asr_result = await asr.transcribe(audio_path)
+                subtitle_text = asr.format_as_subtitle(asr_result)
+                subtitle_source = "ASR识别"
+
+                downloader.cleanup(audio_path)
+            except Exception as e:
+                raise Exception(f"ASR识别失败: {e}") from e
+
+    if not subtitle_text.strip():
+        raise Exception("未能获取到任何字幕内容")
+
+    print_success(f"字幕来源: {subtitle_source}")
+    print_info(f"字幕长度: {len(subtitle_text)} 字符")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("生成总结...", total=None)
+        summary = await summarizer.summarize(
+            subtitle_text,
+            {
+                "bvid": video_info.bvid,
+                "title": video_info.title,
+                "owner_name": video_info.owner_name,
+                "duration": video_info.duration,
+                "desc": video_info.description,
+            },
+        )
+        progress.update(task, completed=True)
+
+    return {
+        "summary": summary,
+        "video_info": {
+            "bvid": video_info.bvid,
+            "title": video_info.title,
+            "owner_name": video_info.owner_name,
+            "duration": video_info.duration,
+        },
+        "subtitle_source": subtitle_source,
+    }, api
+
+
 async def process_video(
     url_or_bv: str,
     config: Config,
@@ -121,7 +234,6 @@ async def process_video(
     api = BilibiliAPI(sessdata=config.bilibili.sessdata)
 
     try:
-        # 提取BV号
         try:
             bvid = extract_bv(url_or_bv)
             print_info(f"提取到BV号: {bvid}")
@@ -129,119 +241,15 @@ async def process_video(
             print_error(f"无法识别BV号: {e}")
             return False
 
-        # 获取视频信息
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("获取视频信息...", total=None)
-            video_info = await api.get_video_info(bvid)
-            progress.update(task, completed=True)
+        summary_bundle, api = await summarize_video(api, bvid, config, Summarizer(config))
 
-        print_success(f"视频标题: {video_info.title}")
-        print_info(f"UP主: {video_info.owner_name}")
-
-        # 获取字幕
-        subtitle_text = ""
-        subtitle_source = ""
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("获取官方字幕...", total=None)
-            subtitles, msg = await api.get_subtitle_list(bvid, video_info.cid)
-
-            if not subtitles and subtitle_login_required(msg):
-                progress.stop()
-                api = await refresh_bilibili_login(api, config)
-                progress.start()
-                progress.update(task, description="重新获取官方字幕...")
-                subtitles, msg = await api.get_subtitle_list(bvid, video_info.cid)
-
-            if subtitles:
-                # 优先使用中文或第一个字幕
-                zh_subs = [s for s in subtitles if "zh" in s.language.lower()]
-                selected = zh_subs[0] if zh_subs else subtitles[0]
-
-                subtitle_items = await api.download_subtitle(selected.subtitle_url)
-                subtitle_text = api.format_subtitle_text(subtitle_items)
-                subtitle_source = "官方字幕" + (
-                    "(AI生成)" if selected.is_ai_generated else ""
-                )
-                progress.update(task, description=f"获取到官方字幕 ({len(subtitle_items)} 句)")
-            else:
-                progress.stop()
-                print_info(f"官方字幕获取情况: {msg}")
-                progress.start()
-                progress.update(task, description="无有效官方字幕，准备使用ASR...")
-
-                # 使用ASR
-                if not config.aliyun.api_key:
-                    print_error("未配置阿里云API密钥，无法使用ASR")
-                    return False
-
-                downloader = AudioDownloader()
-                asr = AliyunASR(config)
-
-                try:
-                    progress.update(task, description="下载音频...")
-                    audio_path = await asyncio.to_thread(downloader.extract_audio, bvid)
-
-                    progress.update(task, description="识别音频...")
-                    asr_result = await asr.transcribe(audio_path)
-                    subtitle_text = asr.format_as_subtitle(asr_result)
-                    subtitle_source = "ASR识别"
-
-                    # 清理临时文件
-                    downloader.cleanup(audio_path)
-
-                except Exception as e:
-                    print_error(f"ASR识别失败: {e}")
-                    subtitle_source = "无字幕"
-
-        if not subtitle_text.strip():
-            print_error("未能获取到任何字幕内容")
-            return False
-
-        print_success(f"字幕来源: {subtitle_source}")
-        print_info(f"字幕长度: {len(subtitle_text)} 字符")
-
-        # 生成总结
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("生成总结...", total=None)
-            summarizer = Summarizer(config)
-            summary = await summarizer.summarize(
-                subtitle_text,
-                {
-                    "bvid": video_info.bvid,
-                    "title": video_info.title,
-                    "owner_name": video_info.owner_name,
-                    "duration": video_info.duration,
-                },
-            )
-            progress.update(task, completed=True)
-
-        # 格式化输出
         formatter = OutputFormatter(output_format)
         output = formatter.format(
-            summary,
-            {
-                "bvid": video_info.bvid,
-                "title": video_info.title,
-                "owner_name": video_info.owner_name,
-                "duration": video_info.duration,
-            },
-            subtitle_source,
+            summary_bundle["summary"],
+            summary_bundle["video_info"],
+            summary_bundle["subtitle_source"],
         )
 
-        # 输出结果
         if output_file:
             Path(output_file).write_text(output, encoding="utf-8")
             print_success(f"总结已保存到: {output_file}")
@@ -257,8 +265,104 @@ async def process_video(
         await api.close()
 
 
+async def process_search_query(
+    keyword: str,
+    limit: int,
+    order: str,
+    config: Config,
+    output_file: Optional[str],
+) -> bool:
+    """根据搜索词批量总结视频并输出单个 Markdown。"""
+    api = BilibiliAPI(sessdata=config.bilibili.sessdata)
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task(
+                f"搜索视频: {keyword} ({SEARCH_ORDER_LABELS.get(order, order)})",
+                total=None,
+            )
+            search_results = await api.search_videos(keyword, limit=limit, order=order)
+            progress.update(task, completed=True)
+
+        if not search_results:
+            print_error(f"未搜索到与“{keyword}”相关的视频")
+            return False
+
+        print_success(f"已找到 {len(search_results)} 个视频，开始逐个总结")
+        summarizer = Summarizer(config)
+        formatter = OutputFormatter("markdown")
+        aggregated_results = []
+
+        for index, item in enumerate(search_results, 1):
+            console.print()
+            console.rule(f"[bold blue]{index}/{len(search_results)} {item.title}")
+            try:
+                summary_bundle, api = await summarize_video(api, item.bvid, config, summarizer)
+                aggregated_results.append(
+                    {
+                        "rank": index,
+                        **summary_bundle,
+                    }
+                )
+            except Exception as e:
+                print_error(f"{item.title} 处理失败: {e}")
+                aggregated_results.append(
+                    {
+                        "rank": index,
+                        "summary": None,
+                        "subtitle_source": "失败",
+                        "video_info": {
+                            "bvid": item.bvid,
+                            "title": item.title,
+                            "owner_name": item.owner_name,
+                            "duration": 0,
+                        },
+                        "error": str(e),
+                    }
+                )
+
+        output = formatter.format_search_results(
+            keyword,
+            SEARCH_ORDER_LABELS.get(order, order),
+            aggregated_results,
+        )
+        target_path = output_file or "search-summary.md"
+        Path(target_path).write_text(output, encoding="utf-8")
+        print_success(f"批量总结已保存到: {target_path}")
+        return True
+    except Exception as e:
+        print_error(f"批量处理失败: {e}")
+        return False
+    finally:
+        await api.close()
+
+
 @click.command()
 @click.argument("url_or_bv", required=False)
+@click.option(
+    "--search",
+    "search_keyword",
+    help="按关键词搜索视频并批量生成总结",
+)
+@click.option(
+    "--limit",
+    default=20,
+    show_default=True,
+    type=click.IntRange(1, 100),
+    help="搜索模式下汇总的视频数量",
+)
+@click.option(
+    "--search-order",
+    "search_order",
+    default="totalrank",
+    show_default=True,
+    type=click.Choice(["totalrank", "pubdate"]),
+    help="搜索模式排序：totalrank=综合排序，pubdate=最新发布",
+)
 @click.option(
     "-o",
     "--output",
@@ -278,7 +382,15 @@ async def process_video(
     is_flag=True,
     help="交互式配置",
 )
-def main(url_or_bv: Optional[str], output: Optional[str], output_format: str, configure: bool):
+def main(
+    url_or_bv: Optional[str],
+    search_keyword: Optional[str],
+    limit: int,
+    search_order: str,
+    output: Optional[str],
+    output_format: str,
+    configure: bool,
+):
     """
     Bilibili 视频总结工具
 
@@ -326,12 +438,25 @@ def main(url_or_bv: Optional[str], output: Optional[str], output_format: str, co
         print_error("阿里云 API Key 未配置")
         sys.exit(1)
 
-    # 检查是否提供了 URL/BV
-    if not url_or_bv:
-        print_error("请提供视频 URL 或 BV 号")
+    if search_keyword and url_or_bv:
+        print_error("`--search` 模式下不需要再提供视频 URL 或 BV 号")
         sys.exit(1)
 
-    # 处理视频
+    if search_keyword:
+        if output_format != "markdown":
+            print_error("搜索批量模式当前仅支持 markdown 输出")
+            sys.exit(1)
+        success = asyncio.run(
+            process_search_query(search_keyword, limit, search_order, config, output)
+        )
+        if not success:
+            sys.exit(1)
+        return
+
+    if not url_or_bv:
+        print_error("请提供视频 URL / BV 号，或使用 `--search`")
+        sys.exit(1)
+
     success = asyncio.run(process_video(url_or_bv, config, output, output_format))
     if not success:
         sys.exit(1)

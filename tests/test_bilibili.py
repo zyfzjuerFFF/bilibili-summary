@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import Mock, patch
 import httpx
 
-from bili_summary.bilibili import BilibiliAPI, VideoInfo
+from bili_summary.bilibili import BilibiliAPI, SearchResultItem, VideoInfo
 
 
 class TestVideoInfo:
@@ -162,3 +162,38 @@ class TestBilibiliAPI:
         assert success is True
         assert msg == "登录成功"
         assert sessdata == "from-client"
+
+    @pytest.mark.asyncio
+    async def test_search_videos_filters_titles_by_all_keywords(self, api):
+        homepage_response = Mock(status_code=200, text="", json=Mock(return_value={}))
+        search_response = Mock(
+            status_code=200,
+            json=Mock(return_value={
+                "code": 0,
+                "data": {
+                    "result": [
+                        {
+                            "bvid": "BV1xx",
+                            "title": '<em class="keyword">理想</em>i6 试驾',
+                            "author": "测试UP",
+                        },
+                        {
+                            "bvid": "BV2yy",
+                            "title": "理想 L6 对比",
+                            "author": "另一个UP",
+                        },
+                        {
+                            "bvid": "BV3zz",
+                            "title": "i6 城市体验",
+                            "author": "第三个UP",
+                        },
+                    ]
+                },
+            }),
+        )
+
+        with patch("httpx.AsyncClient.get", side_effect=[homepage_response, search_response]) as mock_get:
+            results = await api.search_videos("理想 i6", limit=1, order="pubdate")
+
+        assert results == [SearchResultItem(bvid="BV1xx", title="理想i6 试驾", owner_name="测试UP")]
+        assert mock_get.call_args_list[1].kwargs["params"]["order"] == "pubdate"
